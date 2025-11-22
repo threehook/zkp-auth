@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+circuits/build/
+circuits/pot12_*.ptau
+circuits/*.r1cs
+circuits/*.sym
+frontend/dist/
+frontend/.vite/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Go
+backend/bin/
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
