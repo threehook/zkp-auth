@@ -17,10 +17,19 @@ A zero-knowledge proof authentication system with React frontend and Go backend.
 - Circom 2.0+
 
 ### 1. Generate Circuit Keys
+
+The script `circuits/scripts/generate_keys.sh` generates the following:
+- build/password.wasm (for frontend proof generation)
+- build/password.zkey (for frontend proof generation)
+- build/verification_key.json (for backend verification)
+
 ```bash
 cd circuits
 npm install
 ./scripts/generate_keys.sh
+
+mv build/password.wasm build/password.zkey ../frontend/public/circuits
+mv build/verification_key.json ../backend/circuits
 ``` 
 
 ### 2. Start Backend
