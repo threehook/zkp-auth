@@ -1,23 +1,21 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
 )
+
+//go:embed circuits/verification_key.json
+var verificationKeyJSON []byte
 
 type ZKPVerifier struct {
 	verificationKey map[string]interface{}
 }
 
 func NewZKPVerifier() (*ZKPVerifier, error) {
-	keyFile, err := os.ReadFile("circuits/build/verification_key.json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read verification key: %v", err)
-	}
-
 	var vk map[string]interface{}
-	if err := json.Unmarshal(keyFile, &vk); err != nil {
+	if err := json.Unmarshal(verificationKeyJSON, &vk); err != nil {
 		return nil, fmt.Errorf("failed to parse verification key: %v", err)
 	}
 

@@ -28,7 +28,7 @@ var (
 		"alice": {
 			Username:     "alice",
 			Salt:         "12345",
-			PasswordHash: 1518435, // CORRECT: 123 * 12345 = 1518435
+			PasswordHash: 1518435, // 123 * 12345 = 1518435
 		},
 	}
 	jwtSecret = []byte("your-secret-key")
