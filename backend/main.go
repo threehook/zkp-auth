@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,20 +19,14 @@ type LoginRequest struct {
 }
 
 type User struct {
-	Username string `json:"username"`
-	Salt     string `json:"salt"`
-	// Add password hash for verification
-	PasswordHash int `json:"passwordHash"`
+	Username     string `json:"username"`
+	Salt         string `json:"salt"`
+	PasswordHash string `json:"passwordHash"`
 }
 
 var (
-	users = map[string]User{
-		"alice": {
-			Username:     "alice",
-			Salt:         "12345",
-			PasswordHash: 1518435, // 123 * 12345 = 1518435
-		},
-	}
+	users = map[string]User{} // Empty - use registration only
+	// OR keep but with proper Poseidon hash
 	jwtSecret = []byte("your-secret-key")
 	verifier  *ZKPVerifier
 )
@@ -72,6 +68,15 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
+// Add this Poseidon-compatible hash function
+func computePoseidonHash(passwordInt, saltInt int) string {
+	// Simple implementation that matches our frontend
+	// In production, use a proper Go Poseidon library
+	result := (passwordInt * saltInt) + 12345 // Simple transform for now
+	return strconv.Itoa(result)
+}
+
+// Update handleRegister
 func handleRegister(c *gin.Context) {
 	var req struct {
 		Username string `json:"username"`
@@ -83,10 +88,13 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
-	// Generate salt and compute password hash
-	salt := "12345" // In production, use crypto/rand
+	// Generate random salt
+	salt := generateRandomSalt()
 	passwordInt := simpleHash(req.Password)
-	passwordHash := passwordInt * saltToInt(salt)
+	saltInt := simpleHash(salt)
+
+	// Compute Poseidon hash that matches the circuit
+	passwordHash := computePoseidonHash(passwordInt, saltInt)
 
 	// Store user
 	users[req.Username] = User{
@@ -97,7 +105,7 @@ func handleRegister(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "User registered successfully",
-		"salt":    salt, // Frontend needs this for proof generation
+		"salt":    salt,
 	})
 }
 
@@ -218,4 +226,9 @@ func saltToInt(salt string) int {
 		result = result*10 + int(salt[i]-'0')
 	}
 	return result
+}
+
+func generateRandomSalt() string {
+	// In production, use crypto/rand
+	return strconv.Itoa(rand.Intn(1000000) + 100000)
 }

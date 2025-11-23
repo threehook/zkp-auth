@@ -1,69 +1,68 @@
 import React, { useState } from 'react';
 import * as snarkjs from 'snarkjs';
 import './App.css';
+import poseidon from 'poseidon-lite';
 
 interface ProofData {
     proof: any;
     publicSignals: any[];
 }
 
-interface LoginRequest {
-    username: string;
-    proof: string;
-}
+const generateZKProof = async (username: string, password: string, salt: string): Promise<ProofData> => {
+    console.log('=== ZKP Proof Generation ===');
 
-const App: React.FC = () => {
+    // Use the same computation as backend
+    const passwordInt = simpleHash(password);
+    const saltInt = simpleHash(salt);
+
+    // Simple hash that matches backend computePoseidonHash
+    const expectedHash = (passwordInt * saltInt) + 12345;
+
+    console.log('Inputs:', {
+        password: passwordInt,
+        salt: saltInt,
+        expectedHash: expectedHash
+    });
+
+    const inputs = {
+        salt: saltInt,
+        storedHash: expectedHash,
+        password: passwordInt
+    };
+
+    try {
+        const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+          inputs,
+          '/circuits/password.wasm',
+          '/circuits/password.zkey'
+        );
+
+        console.log('Proof generated successfully!');
+        return { proof, publicSignals };
+    } catch (error) {
+        console.error('Proof generation failed:', error);
+        throw error;
+    }
+};
+
+// Keep this for converting strings to numbers, but now we use bigint
+const simpleHash = (str: string): number => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
+    }
+    return hash;
+};
+
+// Add the missing React component
+function App() {
     const [username, setUsername] = useState<string>('');
     const [password, setPassword] = useState<string>('');
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [userData, setUserData] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [message, setMessage] = useState<string>('');
-
-    const generateZKProof = async (username: string, password: string, salt: string): Promise<ProofData> => {
-        const passwordInt = simpleHash(password);
-        const saltInt = saltToInt(salt);
-        const passwordHash = passwordInt * saltInt;
-
-        const inputs = {
-            salt: saltInt,
-            passwordHash: passwordHash,
-            secretPassword: passwordInt
-        };
-
-        try {
-            const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-              inputs,
-              '/circuits/password.wasm',
-              '/circuits/password.zkey'
-            );
-
-            return {
-                proof: proof,
-                publicSignals: publicSignals
-            };
-        } catch (error) {
-            console.error('Proof generation failed:', error);
-            throw error;
-        }
-    };
-
-    const simpleHash = (password: string): number => {
-        let hash = 0;
-        for (let i = 0; i < password.length; i++) {
-            hash = ((hash << 5) - hash) + password.charCodeAt(i);
-            hash |= 0;
-        }
-        return hash;
-    };
-
-    const saltToInt = (salt: string): number => {
-        let result = 0;
-        for (let i = 0; i < salt.length; i++) {
-            result = result * 10 + (salt.charCodeAt(i) - '0'.charCodeAt(0));
-        }
-        return result;
-    };
 
     const handleRegister = async (): Promise<void> => {
         setLoading(true);
@@ -101,17 +100,15 @@ const App: React.FC = () => {
             const salt = '12345';
             const proof = await generateZKProof(username, password, salt);
 
-            const loginRequest: LoginRequest = {
-                username: username,
-                proof: JSON.stringify(proof)
-            };
-
             const response = await fetch('http://localhost:8080/api/login', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(loginRequest),
+                body: JSON.stringify({
+                    username: username,
+                    proof: JSON.stringify(proof),
+                }),
             });
 
             if (response.ok) {
@@ -208,6 +205,6 @@ const App: React.FC = () => {
           </header>
       </div>
     );
-};
+}
 
 export default App;

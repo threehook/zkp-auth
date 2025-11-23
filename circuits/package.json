@@ -1,16 +1,16 @@
 {
   "name": "zkp-circuits",
   "scripts": {
-    "clean": "rm -rf build && rm -f pot12_*.ptau",
-    "compile": "circom.exe password.circom --r1cs --wasm --sym -o build/",
-    "setup": "snarkjs powersoftau new bn128 12 pot12_0000.ptau && snarkjs powersoftau contribute pot12_0000.ptau pot12_0001.ptau --name='First contribution' -e='$(date +%s)' && snarkjs powersoftau prepare phase2 pot12_0001.ptau pot12_final.ptau",
-    "build-keys": "snarkjs groth16 setup build/password.r1cs pot12_final.ptau build/circuit.zkey && snarkjs zkey export verificationkey build/circuit.zkey build/verification_key.json",
-    "organize": "cp build/password_js/password.wasm build/ && cp build/circuit.zkey build/password.zkey",
+    "compile": "npx circom password.circom --r1cs --wasm --sym -o build/",
+    "setup": "snarkjs ptn bn128 12 pot12_0000.ptau && snarkjs powersoftau contribute pot12_0000.ptau pot12_0001.ptau --entropy='12345' -v && snarkjs powersoftau prepare phase2 pot12_0001.ptau pot12_final.ptau",
+    "build-keys": "snarkjs g16s password.r1cs pot12_final.ptau build/circuit.zkey && snarkjs zkev build/circuit.zkey build/verification_key.json",
+    "organize": "cp password.wasm build/ && cp build/circuit.zkey build/password.zkey",
     "build": "npm run compile && npm run setup && npm run build-keys && npm run organize",
     "dev": "npm run build"
   },
   "dependencies": {
     "circom": "^0.5.46",
+    "circomlib": "^2.0.5",
     "snarkjs": "^0.7.5"
   }
 }
