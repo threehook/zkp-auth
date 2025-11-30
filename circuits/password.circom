@@ -1,23 +1,19 @@
-// circuits/password.circom
-pragma circom 2.0.0;
-
-template PasswordProof() {
+template SecurePassword() {
     signal input salt;
-    signal input passwordHash;
-    signal input secretPassword;
+    signal input storedHash;
+    signal input password;
 
     signal output verified;
 
-    // Simple hash simulation
+    // Use the same simple transform as frontend/backend
     signal computedHash;
-    computedHash <== secretPassword * salt;
+    computedHash <== password * salt + 12345;
 
-    // Check if computedHash equals passwordHash
-    // If they are equal, the proof is valid
-    computedHash === passwordHash;
+    // The proof is only valid if computed hash matches stored hash
+    computedHash === storedHash;
 
-    // Output 1 to indicate success (only reaches here if constraint passes)
+    // Output 1 when constraint is satisfied
     verified <== 1;
 }
 
-component main = PasswordProof();
+component main = SecurePassword();
