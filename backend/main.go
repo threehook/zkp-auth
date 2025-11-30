@@ -1,234 +1,104 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
-	"math/rand"
-	"net/http"
-	"strconv"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
-)
-
-type LoginRequest struct {
-	Username string `json:"username"`
-	Proof    string `json:"proof"` // Serialized ZKP proof
-}
-
-type User struct {
-	Username     string `json:"username"`
-	Salt         string `json:"salt"`
-	PasswordHash string `json:"passwordHash"`
-}
-
-var (
-	users = map[string]User{} // Empty - use registration only
-	// OR keep but with proper Poseidon hash
-	jwtSecret = []byte("your-secret-key")
-	verifier  *ZKPVerifier
+	"github.com/joho/godotenv"
+	"zkp-auth/app"
+	"zkp-auth/handlers"
+	"zkp-auth/middleware"
+	"zkp-auth/proof"
+	"zkp-auth/repository"
+	"zkp-auth/security"
+	"zkp-auth/verifier"
 )
 
 func main() {
-	// Initialize ZKP verifier
-	var err error
-	verifier, err = NewZKPVerifier()
-	if err != nil {
-		log.Fatalf("Failed to initialize ZKP verifier: %v", err)
-	}
+	// Load environment variables
+	godotenv.Load("backend/.env")
 
-	r := gin.Default()
+	// Initialize dependencies
+	deps := initDependencies()
 
-	// Add CORS middleware for React frontend
-	r.Use(corsMiddleware())
+	// Create and setup router
+	router := setupRouter(deps)
 
-	r.POST("/api/register", handleRegister)
-	r.POST("/api/login", handleLogin)
-	r.GET("/api/protected", authMiddleware(), handleProtected)
-
-	log.Println("Server running on :8080")
-	r.Run(":8080")
+	// Start server
+	log.Printf("Server running on :%s", deps.Config.ServerPort)
+	router.Run(":" + deps.Config.ServerPort)
 }
 
-// CORS middleware
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// Add this Poseidon-compatible hash function
-func computePoseidonHash(passwordInt, saltInt int) string {
-	// Simple implementation that matches our frontend
-	// In production, use a proper Go Poseidon library
-	result := (passwordInt * saltInt) + 12345 // Simple transform for now
-	return strconv.Itoa(result)
-}
-
-// Update handleRegister
-func handleRegister(c *gin.Context) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+func initDependencies() *app.Dependencies {
+	cfg := app.Config{
+		JWTSecret:  getJWTSecret(),
+		ServerPort: getEnv("SERVER_PORT", "8080"),
+		CorsOrigin: getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		ProofTTL:   5 * time.Minute,
+		JWTExpiry:  24 * time.Hour,
 	}
 
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
+	// Initialize dependencies
+	userRepository := repository.NewMemoryUserRepo()
+	proofStore := proof.NewStore(cfg.ProofTTL)
+	proofValidator := proof.NewValidator(proofStore, cfg.ProofTTL, 2*time.Minute)
+	zkpVerifier := verifier.NewGroth16Verifier()
+	securityMonitor := security.GlobalMonitor
 
-	// Generate random salt
-	salt := generateRandomSalt()
-	passwordInt := simpleHash(req.Password)
-	saltInt := simpleHash(salt)
-
-	// Compute Poseidon hash that matches the circuit
-	passwordHash := computePoseidonHash(passwordInt, saltInt)
-
-	// Store user
-	users[req.Username] = User{
-		Username:     req.Username,
-		Salt:         salt,
-		PasswordHash: passwordHash,
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "User registered successfully",
-		"salt":    salt,
-	})
-}
-
-func handleLogin(c *gin.Context) {
-	var req LoginRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
-
-	// Verify user exists
-	user, exists := users[req.Username]
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
-		return
-	}
-
-	// Verify ZKP proof
-	if verifyZKProof(req.Proof, user) {
-		token := generateJWT(req.Username)
-		c.JSON(http.StatusOK, gin.H{
-			"token": token,
-			"user":  req.Username,
-		})
-	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid proof"})
+	return &app.Dependencies{
+		Config:          cfg,
+		UserRepo:        userRepository,
+		ProofValidator:  proofValidator,
+		ZKPVerifier:     zkpVerifier,
+		SecurityMonitor: securityMonitor,
 	}
 }
 
-func verifyZKProof(proof string, user User) bool {
-	var proofData map[string]interface{}
-	if err := json.Unmarshal([]byte(proof), &proofData); err != nil {
-		log.Printf("Failed to parse proof: %v", err)
-		return false
+func setupRouter(deps *app.Dependencies) *gin.Engine {
+	router := gin.Default()
+
+	// Global middleware
+	router.Use(middleware.CORS(deps.Config.CorsOrigin))
+	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.RequestSizeLimit(100 * 1024))
+	router.Use(middleware.RateLimit())
+	router.Use(handlers.SecurityMiddleware(deps))
+
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandler(deps)
+	adminHandler := handlers.NewAdminHandler(deps.SecurityMonitor)
+
+	// Routes
+	router.GET("/health", handlers.HealthCheck)
+	router.POST("/api/register", authHandler.Register)
+	router.POST("/api/login", authHandler.Login)
+
+	// Protected routes
+	protected := router.Group("/api")
+	protected.Use(handlers.AuthMiddleware(deps.Config.JWTSecret))
+	{
+		protected.POST("/logout", authHandler.Logout)
+		protected.GET("/protected", authHandler.Protected)
+		protected.GET("/admin/security-events", adminHandler.SecurityEvents)
 	}
 
-	// Verify the proof structure and content
-	return verifier.VerifyProof(proofData) // Only one argument!
+	return router
 }
 
-func generateJWT(username string) string {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"username": username,
-		"exp":      time.Now().Add(24 * time.Hour).Unix(),
-		"iat":      time.Now().Unix(),
-	})
-
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		log.Printf("Error generating JWT: %v", err)
-		return ""
+func getJWTSecret() []byte {
+	jwtSecretStr := os.Getenv("JWT_SECRET")
+	if jwtSecretStr == "" {
+		log.Fatal("JWT_SECRET environment variable must be set in production!")
 	}
-	return tokenString
+	return []byte(jwtSecretStr)
 }
 
-func authMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		tokenString := c.GetHeader("Authorization")
-		if tokenString == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing token"})
-			c.Abort()
-			return
-		}
-
-		// Remove "Bearer " prefix if present
-		if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
-			tokenString = tokenString[7:]
-		}
-
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return jwtSecret, nil
-		})
-
-		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			c.Abort()
-			return
-		}
-
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			c.Set("username", claims["username"])
-		}
-
-		c.Next()
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
 	}
-}
-
-func handleProtected(c *gin.Context) {
-	username, exists := c.Get("username")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "This is protected data!",
-		"user":    username,
-		"secret":  "Very sensitive information that requires ZKP auth",
-	})
-}
-
-// Helper functions for demo
-func simpleHash(password string) int {
-	hash := 0
-	for i := 0; i < len(password); i++ {
-		hash = ((hash << 5) - hash) + int(password[i])
-		hash |= 0
-	}
-	return hash
-}
-
-func saltToInt(salt string) int {
-	result := 0
-	for i := 0; i < len(salt); i++ {
-		result = result*10 + int(salt[i]-'0')
-	}
-	return result
-}
-
-func generateRandomSalt() string {
-	// In production, use crypto/rand
-	return strconv.Itoa(rand.Intn(1000000) + 100000)
+	return value
 }
